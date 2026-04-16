@@ -1,0 +1,201 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'Smart Traffic Intersection Monitoring - Learner Lab Cloud Infrastructure'
+
+Parameters:
+  LabRoleArn:
+    Type: String
+    Description: "The ARN of your existing Learner Lab 'LabRole' used for API Gateway and Lambda execution."
+    Default: "arn:aws:iam::123456789012:role/LabRole"
+  DashboardBucketName:
+    Type: String
+    Description: "A globally unique S3 bucket name for hosting the dashboard dashboard."
+    Default: "smart-traffic-dashboard-learner-lab-12345"
+
+Resources:
+  # 1. DynamoDB Table for Time-Series Traffic Data
+  TrafficDataTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SmartTrafficData
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: node_id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: N
+      KeySchema:
+        - AttributeName: node_id
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+
+  # 2. SQS Queue for Decoupling API and Lambda
+  TrafficDataQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: SmartTrafficQueue
+
+  # 3. S3 Bucket for Static Website Hosting
+  DashboardBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref DashboardBucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        IgnorePublicAcls: false
+        BlockPublicPolicy: false
+        RestrictPublicBuckets: false
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - '*'
+            AllowedMethods:
+              - GET
+            AllowedOrigins:
+              - '*'
+            MaxAge: 3000
+
+  # Allow Public Read to Bucket Policy
+  DashboardBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DashboardBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Sub 'arn:aws:s3:::${DashboardBucket}/*'
+
+  # 4. Lambda Function to process SQS and write to DynamoDB
+  TrafficDataProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ProcessTrafficData
+      Handler: lambda_processor.lambda_handler
+      CodeUri: .
+      Role: !Ref LabRoleArn
+      Runtime: python3.9
+      Timeout: 10
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref TrafficDataTable
+      Events:
+        SQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt TrafficDataQueue.Arn
+            BatchSize: 10
+
+  # 5. Lambda Function for GET /status endpoint
+  TrafficStatusFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: GetTrafficStatus
+      Handler: GetTrafficStatus.lambda_handler
+      CodeUri: .
+      Role: !Ref LabRoleArn
+      Runtime: python3.9
+      Timeout: 10
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref TrafficDataTable
+
+  # 6. API Gateway REST API
+  TrafficApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: SmartTrafficAPI
+      Description: API for Fog Nodes to push data, Dashboard to fetch status.
+
+  # --- POST /traffic-data (SQS Integration) ---
+  TrafficApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref TrafficApi
+      ParentId: !GetAtt TrafficApi.RootResourceId
+      PathPart: traffic-data
+
+  TrafficApiMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref TrafficApi
+      ResourceId: !Ref TrafficApiResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:sqs:path/${AWS::AccountId}/${TrafficDataQueue.QueueName}"
+        Credentials: !Ref LabRoleArn
+        RequestParameters:
+          integration.request.header.Content-Type: "'application/x-www-form-urlencoded'"
+        RequestTemplates:
+          application/json: "Action=SendMessage&MessageBody=$util.urlEncode($input.body)"
+        IntegrationResponses:
+          - StatusCode: "200"
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: "200"
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # --- GET /status (Lambda Integration) ---
+  StatusApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref TrafficApi
+      ParentId: !GetAtt TrafficApi.RootResourceId
+      PathPart: status
+
+  StatusApiMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref TrafficApi
+      ResourceId: !Ref StatusApiResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${TrafficStatusFunction.Arn}/invocations"
+      MethodResponses:
+        - StatusCode: "200"
+
+  StatusLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref TrafficStatusFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${TrafficApi}/*/GET/status"
+
+  # 7. Deploy the API
+  TrafficApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - TrafficApiMethod
+      - StatusApiMethod
+    Properties:
+      RestApiId: !Ref TrafficApi
+      StageName: prod
+
+Outputs:
+  ApiEndpointUrl:
+    Description: "The POST URL for Fog Nodes to push data to"
+    Value: !Sub "https://${TrafficApi}.execute-api.${AWS::Region}.amazonaws.com/prod/traffic-data"
+  ApiStatusUrl:
+    Description: "The GET URL for the Dashboard to fetch status from"
+    Value: !Sub "https://${TrafficApi}.execute-api.${AWS::Region}.amazonaws.com/prod/status"
+  DashboardWebsiteURL:
+    Description: "URL for website hosted on S3"
+    Value: !GetAtt DashboardBucket.WebsiteURL
+  DynamoTableName:
+    Description: "The created DynamoDB table name"
+    Value: !Ref TrafficDataTable

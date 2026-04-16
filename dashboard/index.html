@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Traffic Intersection Monitor</title>
+    <!-- Use Google Fonts (Inter) -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <!-- Chart.js for dynamic graphs -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body class="dark-theme">
+    <div class="dashboard-container">
+        <!-- Header -->
+        <header class="glass-panel">
+            <div class="header-content">
+                <div class="logo">
+                    <div class="pulse-dot"></div>
+                    <h1>Smart Traffic <span class="highlight">Intersection Monitor</span></h1>
+                </div>
+                <div class="live-status">
+                    <span class="status-indicator online"></span>
+                    <span class="status-text">Fog Node Connected</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main>
+            <!-- Alerts Section -->
+            <section class="alerts-section">
+                <div id="congestion-alert" class="alert-card congestion-alert hidden">
+                    <div class="alert-icon">⚠️</div>
+                    <div class="alert-info">
+                        <h3>Traffic Congestion Detected</h3>
+                        <p>High vehicle count and low average speed reported at Node: Intersection-A1</p>
+                    </div>
+                </div>
+                <div id="pollution-alert" class="alert-card pollution-alert hidden">
+                    <div class="alert-icon">☣️</div>
+                    <div class="alert-info">
+                        <h3>Critical Pollution Level</h3>
+                        <p>CO2 AQI exceeds safe threshold at Node: Intersection-A1</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Metrics Grid -->
+            <section class="metrics-grid">
+                <!-- Vehicle Count -->
+                <div class="metric-card glass-panel" id="card-vehicles">
+                    <div class="metric-header">
+                        <h3>Vehicle Count</h3>
+                        <span class="icon">🚗</span>
+                    </div>
+                    <div class="metric-value">
+                        <span id="val-vehicles">--</span>
+                        <span class="unit">/ 15s</span>
+                    </div>
+                    <div class="metric-trend" id="trend-vehicles">Analyzing...</div>
+                </div>
+
+                <!-- Average Speed -->
+                <div class="metric-card glass-panel" id="card-speed">
+                    <div class="metric-header">
+                        <h3>Average Speed</h3>
+                        <span class="icon">⚡</span>
+                    </div>
+                    <div class="metric-value">
+                        <span id="val-speed">--</span>
+                        <span class="unit">km/h</span>
+                    </div>
+                    <div class="metric-trend" id="trend-speed">Analyzing...</div>
+                </div>
+
+                <!-- Noise Level -->
+                <div class="metric-card glass-panel" id="card-noise">
+                    <div class="metric-header">
+                        <h3>Noise Level</h3>
+                        <span class="icon">🔊</span>
+                    </div>
+                    <div class="metric-value">
+                        <span id="val-noise">--</span>
+                        <span class="unit">dB</span>
+                    </div>
+                    <div class="metric-trend" id="trend-noise">Analyzing...</div>
+                </div>
+
+                <!-- Air Pollution -->
+                <div class="metric-card glass-panel" id="card-pollution">
+                    <div class="metric-header">
+                        <h3>Air Pollution (AQI)</h3>
+                        <span class="icon">🌫️</span>
+                    </div>
+                    <div class="metric-value">
+                        <span id="val-pollution">--</span>
+                        <span class="unit">Index</span>
+                    </div>
+                    <div class="metric-trend" id="trend-pollution">Analyzing...</div>
+                </div>
+            </section>
+
+            <!-- Dynamic Charts Section -->
+            <section class="charts-section">
+                <div class="chart-container glass-panel">
+                    <h3>Traffic Flow (Vehicles & Speed)</h3>
+                    <canvas id="trafficChart"></canvas>
+                </div>
+                <div class="chart-container glass-panel" style="margin-top: 2rem;">
+                    <h3>Environment (Noise & Pollution)</h3>
+                    <canvas id="envChart"></canvas>
+                </div>
+            </section>
+
+            <!-- System Info -->
+            <section class="info-section glass-panel">
+                <div class="info-header">
+                    <h3>Edge Processing Intelligence</h3>
+                </div>
+                <div class="info-body">
+                    <p><strong>Fog Node Aggregation:</strong> Every 3 seconds.</p>
+                    <p><strong>Bandwidth Saved:</strong> Local processing prevents continuous raw data streams to the
+                        AWS cloud.</p>
+                    <p><strong>Last Updated:</strong> <span id="last-updated-time">--</span></p>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Load scripts -->
+    <script src="app.js"></script>
+</body>
+
+</html>

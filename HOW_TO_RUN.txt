@@ -1,0 +1,203 @@
+================================================================
+HOW TO RUN — Smart Traffic Intersection Monitor
+================================================================
+
+IMPORTANT: Every time you start a new Learner Lab session,
+your AWS credentials change. You MUST update them (Step 1).
+
+================================================================
+STEP 1 — Configure AWS Credentials (EVERY session)
+================================================================
+
+Open a terminal and run:
+
+    aws configure
+
+Enter these when prompted:
+    AWS Access Key ID     → (from Learner Lab "AWS Details")
+    AWS Secret Access Key → (from Learner Lab "AWS Details")
+    Default region        → us-east-1
+    Default output format → json
+
+ALSO set the session token (Learner Lab requires it):
+
+    aws configure set aws_session_token YOUR_SESSION_TOKEN_HERE
+
+Verify it works:
+
+    aws sts get-caller-identity
+
+================================================================
+STEP 2 — Install Python Dependencies (one time only)
+================================================================
+
+Open a terminal and run:
+
+    cd "/Users/shetty/Desktop/MSC Sem 2/Fog and Edge/Traffic-system-fog-and-edge-main/fog"
+    python3 -m venv venv
+    source venv/bin/activate
+    pip install flask flask-cors requests
+
+This creates a virtual environment inside the fog/ folder.
+
+After this, every time you want to run the fog node, you must
+activate the virtual environment first:
+
+    cd fog
+    source venv/bin/activate
+
+================================================================
+STEP 3 — Start the Fog Node (Sensor + Flask Server)
+================================================================
+
+    cd "/Users/shetty/Desktop/MSC Sem 2/Fog and Edge/Traffic-system-fog-and-edge-main/fog"
+    source venv/bin/activate
+    python3 fog_node.py
+
+You should see:
+    * Serving Flask app 'fog_node'
+    * Running on http://127.0.0.1:5001
+
+And every 15 seconds:
+    Aggregated: V=42, S=11.22, CO2=34.24 | [CONGESTION DETECTED]
+    Successfully pushed summary to cloud.
+
+"Successfully pushed summary to cloud." confirms data is flowing:
+    Fog Node → API Gateway POST → SQS → Lambda → DynamoDB
+
+Keep this terminal running! Don't close it.
+
+================================================================
+STEP 4 — Open the Dashboard
+================================================================
+
+OPTION A: S3-hosted Dashboard (uses cloud data from DynamoDB)
+    Open this URL in your browser:
+
+    http://traffic-dashboard-kanna2026.s3-website-us-east-1.amazonaws.com
+
+OPTION B: Local Dashboard (uses local fog node data directly)
+    Open a NEW terminal (keep the fog node running):
+
+    cd "/Users/shetty/Desktop/MSC Sem 2/Fog and Edge/Traffic-system-fog-and-edge-main/dashboard"
+    python3 -m http.server 8080
+
+    Open: http://localhost:8080
+
+Both options show the same dashboard UI — the difference is
+where the data comes from.
+
+================================================================
+ABOUT THE S3 URL — VERY IMPORTANT
+================================================================
+
+NO — the S3 link is NOT the "Object URL" of index.html.
+Those two URLs are different:
+
+WRONG (Object URL):
+    https://traffic-dashboard-kanna2026.s3.amazonaws.com/index.html
+
+RIGHT (Static Website Hosting URL):
+    http://traffic-dashboard-kanna2026.s3-website-us-east-1.amazonaws.com
+
+The Object URL (https://bucketname.s3.amazonaws.com/file) just
+serves raw files. It does NOT serve index.html as the default
+page, and CSS/JS relative paths will break.
+
+The Website Hosting URL (http://bucketname.s3-website-REGION...)
+serves it as a proper website with index.html as the root page.
+
+HOW TO FIND THIS URL:
+    1. Go to AWS Console → S3
+    2. Click on bucket: traffic-dashboard-kanna2026
+    3. Click "Properties" tab
+    4. Scroll down to "Static website hosting"
+    5. The URL is listed under "Bucket website endpoint"
+
+Or via CLI:
+
+    aws s3api get-bucket-website --bucket traffic-dashboard-kanna2026
+
+================================================================
+UPDATING THE DASHBOARD ON S3
+================================================================
+
+If you change any dashboard files (app.js, index.html, style.css),
+upload the updated files to S3:
+
+    aws s3 sync dashboard/ s3://traffic-dashboard-kanna2026/ --delete \
+      --cache-control "no-cache, no-store, must-revalidate"
+
+IMPORTANT: After uploading, do a HARD REFRESH in your browser:
+    Mac:     Cmd + Shift + R
+    Windows: Ctrl + Shift + R
+Otherwise your browser will keep showing the old cached version!
+
+================================================================
+FULL DATA FLOW (End to End)
+================================================================
+
+1. sensors.py generates random traffic data (vehicles, speed,
+   noise, pollution) every 2 seconds using threads.
+
+2. fog_node.py aggregates sensor data every 15 seconds, applies
+   edge logic (congestion + pollution alerts), and POSTs the
+   summary to API Gateway.
+
+3. API Gateway (POST /traffic-data) forwards the payload to
+   the SQS queue (SmartTrafficQueue).
+
+4. SQS triggers Lambda (ProcessTrafficData) which writes
+   the data to DynamoDB (SmartTrafficData table).
+
+5. Dashboard polls API Gateway (GET /status) every 3 seconds.
+
+6. API Gateway (GET /status) triggers Lambda (GetTrafficStatus)
+   which reads the latest 3 records from DynamoDB and returns them.
+
+7. Dashboard updates the metric cards, charts, and alert banners.
+
+================================================================
+TROUBLESHOOTING
+================================================================
+
+PROBLEM: "ModuleNotFoundError: No module named 'requests'"
+FIX:     You forgot to activate the virtual environment.
+         Run: source venv/bin/activate    (inside the fog/ folder)
+
+PROBLEM: Charts show flat/same data on S3 dashboard
+FIX:     The fog node isn't pushing to cloud. Make sure:
+         1. fog_node.py has PUSH_TO_CLOUD = True (line 28)
+         2. fog_node.py has the real API Gateway URL (line 24)
+         3. The fog node terminal shows "Successfully pushed..."
+
+PROBLEM: "Connection error" on local dashboard
+FIX:     The fog node isn't running. Start it (Step 3).
+
+PROBLEM: AWS credentials expired
+FIX:     Start a new Learner Lab session and redo Step 1.
+
+PROBLEM: S3 website returns 403 Forbidden
+FIX:     Bucket policy may be missing. Run:
+         aws s3api put-bucket-policy --bucket traffic-dashboard-kanna2026 \
+           --policy '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::traffic-dashboard-kanna2026/*"}]}'
+
+================================================================
+QUICK START (Copy-Paste Version)
+================================================================
+
+Terminal 1 — Start fog node:
+
+    cd "/Users/shetty/Desktop/MSC Sem 2/Fog and Edge/Traffic-system-fog-and-edge-main/fog"
+    source venv/bin/activate
+    python3 fog_node.py
+
+Terminal 2 (optional) — Local dashboard:
+
+    cd "/Users/shetty/Desktop/MSC Sem 2/Fog and Edge/Traffic-system-fog-and-edge-main/dashboard"
+    python3 -m http.server 8080
+
+Browser — Open either:
+    http://traffic-dashboard-kanna2026.s3-website-us-east-1.amazonaws.com
+    OR
+    http://localhost:8080

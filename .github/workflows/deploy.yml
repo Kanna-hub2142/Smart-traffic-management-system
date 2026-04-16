@@ -1,0 +1,101 @@
+name: Deploy Smart Traffic to AWS Learner Lab
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy-to-aws:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }} # Crucial for Learner Lab
+          aws-region: us-east-1 # Change if your Learner Lab is in a different region
+
+      - name: Package CloudFormation Template
+        run: |
+          # Create a deployment bucket using wildcard to ensure uniqueness if not already exists
+          S3_DEPLOY_BUCKET="smart-traffic-deploy-${{ github.repository_owner }}-${{ github.run_id }}"
+          # Since bucket names must be lower case
+          S3_DEPLOY_BUCKET=$(echo "$S3_DEPLOY_BUCKET" | tr '[:upper:]' '[:lower:]')
+          
+          # We'll just generate a unique id for the bucket based on the repo name and owner name
+          aws s3 mb s3://$S3_DEPLOY_BUCKET || echo "Bucket might already exist or name invalid, ignoring mb failure"
+
+          echo "Packaging Lambdas to $S3_DEPLOY_BUCKET..."
+          aws cloudformation package \
+            --template-file cloud/cloudformation_template.yaml \
+            --s3-bucket $S3_DEPLOY_BUCKET \
+            --output-template-file packaged-template.yaml
+
+      - name: Deploy CloudFormation Stack
+        run: |
+          echo "Deploying CloudFormation stack..."
+          # The LabRole ARN format in AWS Learner Lab
+          LAB_ROLE_ARN="arn:aws:iam::$(aws sts get-caller-identity --query Account --output text):role/LabRole"
+
+          aws cloudformation deploy \
+            --template-file packaged-template.yaml \
+            --stack-name smart-traffic-stack \
+            --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+            --parameter-overrides LabRoleArn=$LAB_ROLE_ARN
+
+      - name: Retrieve Stack Outputs
+        id: stack-outputs
+        run: |
+          API_STATUS_URL=$(aws cloudformation describe-stacks \
+            --stack-name smart-traffic-stack \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiStatusUrl'].OutputValue" \
+            --output text)
+            
+          API_POST_URL=$(aws cloudformation describe-stacks \
+            --stack-name smart-traffic-stack \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiEndpointUrl'].OutputValue" \
+            --output text)
+
+          DASHBOARD_BUCKET=$(aws cloudformation describe-stack-resource \
+            --stack-name smart-traffic-stack \
+            --logical-resource-id DashboardBucket \
+            --query "StackResourceDetail.PhysicalResourceId" \
+            --output text)
+            
+          WEBSITE_URL=$(aws cloudformation describe-stacks \
+            --stack-name smart-traffic-stack \
+            --query "Stacks[0].Outputs[?OutputKey=='DashboardWebsiteURL'].OutputValue" \
+            --output text)
+            
+          echo "API_STATUS_URL=$API_STATUS_URL" >> $GITHUB_ENV
+          echo "API_POST_URL=$API_POST_URL" >> $GITHUB_ENV
+          echo "DASHBOARD_BUCKET=$DASHBOARD_BUCKET" >> $GITHUB_ENV
+          echo "WEBSITE_URL=$WEBSITE_URL" >> $GITHUB_ENV
+
+      - name: Update Placeholders
+        run: |
+          sed -i "s|AWS_API_GATEWAY_STATUS_URL_PLACEHOLDER|${API_STATUS_URL}|g" dashboard/app.js
+          sed -i "s|AWS_API_GATEWAY_TRAFFIC_DATA_URL_PLACEHOLDER|${API_POST_URL}|g" fog/fog_node.py
+          echo "Updated dashboard/app.js to point to: $API_STATUS_URL"
+          echo "Updated fog/fog_node.py (for your reference download later)"
+
+      - name: Deploy Static Dashboard to S3
+        run: |
+          echo "Syncing dashboard folder to S3 bucket: $DASHBOARD_BUCKET"
+          aws s3 sync dashboard/ s3://$DASHBOARD_BUCKET/ \
+            --delete
+
+      - name: Deployment Summary
+        run: |
+          echo "============================================="
+          echo "🚀 Deployment Successful!"
+          echo "🌐 Dashboard Website URL: $WEBSITE_URL"
+          echo "📡 API Status Endpoint: $API_STATUS_URL"
+          echo "📡 API Post Endpoint: $API_POST_URL"
+          echo "============================================="
